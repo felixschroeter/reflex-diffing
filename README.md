@@ -7,6 +7,7 @@ This exploratory project analysis reasoning behaviors ("reflexes") in Phi-4-mini
 - **Model Pair**: Phi-4-mini-instruct vs. Phi-4-mini-reasoning. The are siblings from a shared (unreleased) base, same 3.8B architecture/tokenizer and therefore diffable in activation, output, and weight space.
 
 _This project is a work in progress, and the reflex is still to be decided._
+
 📓 [Research log](./LOG.md) summarizes the steps I already took and my preliminary results.
 
 ### Steps
