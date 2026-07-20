@@ -38,3 +38,5 @@ _This project is a work in progress, and the reflex is still to be decided._
 ### Related Work
 - **Ward, Lin, Venhoff & Nanda (2025) — *Reasoning-Finetuning Repurposes Latent Representations in Base Models*** [arXiv:2507.12638](https://arxiv.org/pdf/2507.12638)
 - **Venhoff, Arcuschin, Torr, Conmy & Nanda (2025) — *Understanding Reasoning in Thinking Language Models via Steering Vectors*** [arXiv:2506.18167](https://arxiv.org/pdf/2506.18167)
+- Xu et al. (2025) — Phi-4-Mini-Reasoning: Exploring the Limits of Small Reasoning Language Models in Math [arXiv:2504.21233](https://arxiv.org/pdf/2504.21233)
+- Microsoft (2025) — Phi-4-Mini Technical Report: Compact yet Powerful Multimodal Language Models via Mixture-of-LoRAs [arXiv:2503.01743](https://arxiv.org/pdf/2503.01743)
