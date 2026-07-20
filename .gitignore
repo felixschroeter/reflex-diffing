@@ -219,3 +219,6 @@ __marimo__/
 
 # Generated rollouts and graded outputs
 data/
+
+# claude worktrees
+.claude/worktrees/
