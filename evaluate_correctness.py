@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""
-evaluate_correctness.py  --  local grading step for the rollouts.
+"""Grade MATH-500 rollouts locally with math-verify.
 
 Reads a rollouts_<tag>.jsonl produced by generate_rollouts.py, grades each
-generation against its gold answer with math-verify, and writes an enriched
-rollouts_<tag>_graded.jsonl (each row gains `correct` + `extracted_answer`).
-Prints an accuracy summary.
-
-This runs locally (no GPU, no Modal) so grading can be iterated cheaply and
-independently of generation.
+generation against its gold answer, and writes an enriched
+rollouts_<tag>_graded.jsonl where every row gains `correct`, `extracted_answer`,
+and `parse_failed`. Prints an accuracy summary. Runs locally (no GPU, no Modal).
 
 Usage:
-  uv run python evaluate_correctness.py rollouts_reasoning.jsonl
-  uv run python evaluate_correctness.py rollouts_instruct.jsonl --output graded.jsonl
+  uv run python evaluate_correctness.py data/rollouts_reasoning.jsonl
+  uv run python evaluate_correctness.py data/rollouts_instruct.jsonl --output data/graded.jsonl
 """
 
 import argparse
@@ -20,8 +16,9 @@ import json
 from pathlib import Path
 
 
-# --- grading helpers (lifted verbatim from the original rollout script) ------
+# --- grading (math-verify) --------------------------------------------------
 def extract_last_boxed(text):
+    """Return the content of the last \\boxed{...} in `text`, or None."""
     key = r"\boxed{"
     idx = text.rfind(key)
     if idx == -1:
@@ -40,6 +37,10 @@ def extract_last_boxed(text):
 
 
 def is_correct(gold, generation):
+    """Grade one generation against its gold answer.
+
+    Returns (correct, extracted_answer, parse_failed).
+    """
     # math_verify's parse() only extracts from delimited LaTeX/expressions; a bare
     # string (e.g. "\pi", "p - q", "\dfrac{14}{3}") parses to [] and verify()
     # then trivially fails. Wrap gold + our boxed candidate in $...$ so the LaTeX
@@ -59,29 +60,38 @@ def is_correct(gold, generation):
         if extracted is not None
         else parse(generation, extraction_config=cfg)  # no box -> scan raw output
     )
+    # parse_failed marks rows we couldn't reliably grade (as opposed to a genuinely
+    # wrong answer): the candidate parsed to nothing, or verify() itself raised.
+    parse_failed = not cand_p
     try:
         ok = bool(verify(gold_p, cand_p))
     except Exception:
         ok = False
-    return ok, extracted
+        parse_failed = True
+    return ok, extracted, parse_failed
 
 
 def evaluate(input_path, output_path):
+    """Grade every row of `input_path`, write the enriched rows to `output_path`,
+    and return a summary dict (n, n_correct, accuracy, n_truncated, n_parse_failed)."""
     n = 0
     n_correct = 0
     n_truncated = 0
+    n_parse_failed = 0
     with open(input_path) as fin, open(output_path, "w") as fout:
         for line in fin:
             line = line.strip()
             if not line:
                 continue
             row = json.loads(line)
-            ok, extracted = is_correct(row["gold"], row["generation"])
+            ok, extracted, parse_failed = is_correct(row["gold"], row["generation"])
             row["extracted_answer"] = extracted
             row["correct"] = ok
+            row["parse_failed"] = parse_failed
             n += 1
             n_correct += ok
             n_truncated += bool(row.get("truncated"))
+            n_parse_failed += parse_failed
             fout.write(json.dumps(row) + "\n")
 
     summary = {
@@ -91,6 +101,7 @@ def evaluate(input_path, output_path):
         "n_correct": n_correct,
         "accuracy": n_correct / n if n else 0.0,
         "n_truncated": n_truncated,
+        "n_parse_failed": n_parse_failed,
     }
     return summary
 
@@ -100,7 +111,7 @@ def main():
     ap.add_argument(
         "input",
         nargs="?",
-        default="rollouts_reasoning.jsonl",
+        default="data/rollouts_reasoning.jsonl",
         help="rollouts jsonl from generate_rollouts.py",
     )
     ap.add_argument(
@@ -123,12 +134,17 @@ def main():
         f"\nAccuracy: {summary['n_correct']}/{summary['n']} = "
         f"{summary['accuracy']:.1%}  (paper ref ~94.6%)"
     )
-    print(
-        f"Truncated: {summary['n_truncated']}/{summary['n']} "
-        f"= {summary['n_truncated'] / summary['n']:.1%}"
-        if summary["n"]
-        else "No rows graded."
-    )
+    if summary["n"]:
+        print(
+            f"Parse failures: {summary['n_parse_failed']}/{summary['n']} "
+            f"= {summary['n_parse_failed'] / summary['n']:.1%}  (grade unreliable)"
+        )
+        print(
+            f"Truncated: {summary['n_truncated']}/{summary['n']} "
+            f"= {summary['n_truncated'] / summary['n']:.1%}"
+        )
+    else:
+        print("No rows graded.")
     print(f"Wrote graded rollouts -> {summary['output']}")
 
 

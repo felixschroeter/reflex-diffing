@@ -1,50 +1,34 @@
 #!/usr/bin/env python3
-"""
-generate_rollouts.py  --  Modal (serverless) version of the rollout step.
+"""Generate MATH-500 rollouts on Modal (serverless GPU).
 
-Generation ONLY: load MATH-500 -> generate -> write rollouts_<tag>.jsonl. It
-runs in one remote GPU function and persists its output to a Modal Volume, so
-nothing depends on your local machine staying alive -- launch detached and close
-your laptop: the run survives a dropped connection or closed terminal.
-
-Correctness grading is intentionally NOT here: it runs locally afterwards via
-evaluate_correctness.py (cheap to iterate, no GPU). Reflex analysis is a later,
-dedicated step and is likewise absent.
+Generation only: load MATH-500 -> generate -> write rollouts_<tag>.jsonl to a
+Modal Volume. Correctness grading runs separately and locally via
+evaluate_correctness.py.
 
 Setup (once):
-  uv sync                        # local entrypoint deps (modal)
-  uv run modal setup             # auth
+  uv sync
+  uv run modal setup
 
-Run (full MATH-500, detached -> survives disconnect):
+Run:
   uv run modal run --detach generate_rollouts.py --n 500
-
-  # the instruct sibling (separate output file):
   uv run modal run generate_rollouts.py --n 500 --model microsoft/Phi-4-mini-instruct
 
-Retrieve results (any time after it finishes, even from another machine):
-  modal volume get rollouts-data rollouts_reasoning.jsonl ./rollouts_reasoning.jsonl
+Retrieve results later (from anywhere):
+  modal volume get rollouts-data rollouts_reasoning.jsonl ./data/rollouts_reasoning.jsonl
 
-Then grade locally:
-  uv run python evaluate_correctness.py rollouts_reasoning.jsonl
-
-Cost: a 3.8B model on an H100 is a few $ for the full 500-problem set (minutes
-of GPU time), well inside the $30/mo free credits. Phi-4 is MIT-licensed -> no
-HF token. Do all white-box work (activations, KL, steering) locally afterwards.
+Grade locally:
+  uv run python evaluate_correctness.py data/rollouts_reasoning.jsonl
 """
 
 import json
 import re
 import statistics
+from pathlib import Path
 
 import modal
 
-# --- container image --------------------------------------------------------
-# CUDA *devel* base image: ships nvcc + the CUDA toolkit so vLLM can JIT-compile
-# kernels / use torch.compile + CUDA graphs at runtime (the -runtime/-base tags
-# omit nvcc). add_python gives the image an interpreter (the nvidia/cuda images
-# ship none); pin to 3.12 for vLLM wheel coverage. Built with uv for fast,
-# reproducible installs. datasets is here for loading MATH-500 remotely; grading
-# deps (math-verify) now live with the local evaluate_correctness.py step.
+# CUDA *devel* base ships nvcc so vLLM can JIT-compile kernels; add_python gives
+# the image an interpreter (the nvidia/cuda images ship none).
 image = modal.Image.from_registry(
     "nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.12"
 ).uv_pip_install(
@@ -52,16 +36,17 @@ image = modal.Image.from_registry(
 )
 app = modal.App("phi-mini-rollouts", image=image)
 
-# persist the HF weights cache so cold starts after the first don't re-download
+# Persist the HF weights cache across runs so only the first cold start downloads.
 hf_cache = modal.Volume.from_name("hf-cache", create_if_missing=True)
-# durable output store: results land here and survive any local disconnect
+# Durable output store: results survive any local disconnect.
 results_vol = modal.Volume.from_name("rollouts-data", create_if_missing=True)
-RESULTS_DIR = "/data"
+RESULTS_DIR = "/data"  # Volume mount inside the remote container
+LOCAL_DATA_DIR = Path("data")  # where the local copy is written
 MODEL = "microsoft/Phi-4-mini-reasoning"
 
 
-# --- helpers ----------------------------------------------------------------
 def normalize_level(raw):
+    """Coerce a MATH-500 difficulty field ("Level 3", 3, ...) to an int, or None."""
     if isinstance(raw, int):
         return raw
     if isinstance(raw, str):
@@ -80,7 +65,6 @@ def model_tag(model):
     return re.sub(r"[^a-z0-9]+", "-", name).strip("-")
 
 
-# --- the remote job: load -> generate -> write to Volume --------------------
 @app.function(
     gpu="H100",
     volumes={"/root/.cache/huggingface": hf_cache, RESULTS_DIR: results_vol},
@@ -96,6 +80,8 @@ def run_rollouts(
     seed: int = 0,
     output: str = None,
 ) -> dict:
+    """Load the first `n` MATH-500 problems, generate with vLLM, and write the
+    rollouts to the results Volume. Returns a generation-stats summary."""
     import os
 
     from datasets import load_dataset
@@ -104,8 +90,7 @@ def run_rollouts(
 
     output = output or f"rollouts_{model_tag(model)}.jsonl"
 
-    # 1. load MATH-500 (cached in hf_cache after the first run); no filtering,
-    #    just take the first n problems.
+    # 1. Load MATH-500 and take the first n problems (no filtering).
     ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
     rows = []
     for item in ds:
@@ -119,7 +104,7 @@ def run_rollouts(
             break
     print(f"{len(rows)} problems. Generating with {model}...")
 
-    # 2. generate (vLLM batches the whole set in parallel)
+    # 2. Generate (vLLM batches the whole set in parallel).
     tok = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
     prompts = [
         tok.apply_chat_template(
@@ -146,7 +131,7 @@ def run_rollouts(
     outputs = llm.generate(prompts, sp)
     hf_cache.commit()  # persist any newly cached weights
 
-    # 3. write to the Volume (durable; independent of the local session)
+    # 3. Write rollouts to the Volume.
     n_truncated = 0
     tok_lens = []
     out_path = os.path.join(RESULTS_DIR, output)
@@ -171,7 +156,7 @@ def run_rollouts(
                 })
                 + "\n"
             )
-    results_vol.commit()  # <-- makes the file durable & retrievable
+    results_vol.commit()  # make the file durable & retrievable
 
     m = len(rows)
     summary = {
@@ -198,7 +183,6 @@ def run_rollouts(
     return summary
 
 
-# --- thin local entrypoint: kick off the remote job, then pull results ------
 @app.local_entrypoint()
 def main(
     n: int = 500,
@@ -208,6 +192,8 @@ def main(
     seed: int = 0,
     output: str = None,
 ):
+    """Kick off the remote generation job, print a summary, and copy the
+    rollouts into the local ./data directory."""
     summary = run_rollouts.remote(
         n=n,
         model=model,
@@ -228,19 +214,20 @@ def main(
         f"median {summary['tokens']['median']:.0f} max {summary['tokens']['max']}"
     )
 
-    # best-effort local copy (only runs if you're still connected); the Volume
-    # is the source of truth either way.
+    # Best-effort local copy; the Volume remains the source of truth if skipped.
+    local_path = LOCAL_DATA_DIR / output
     try:
-        with open(output, "wb") as f:
+        LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with open(local_path, "wb") as f:
             for chunk in results_vol.read_file(output):
                 f.write(chunk)
         print(
-            f"\nSaved -> {output} (local copy). "
-            f"Grade it next: uv run python evaluate_correctness.py {output}"
+            f"\nSaved -> {local_path}. "
+            f"Grade it next: uv run python evaluate_correctness.py {local_path}"
         )
     except Exception as e:
         print(
             f"\nResults are safe on volume 'rollouts-data':/{output} "
             f"(local copy skipped: {e}).\n"
-            f"Fetch with: modal volume get rollouts-data {output} ./{output}"
+            f"Fetch with: modal volume get rollouts-data {output} ./{local_path}"
         )
