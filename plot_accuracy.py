@@ -32,6 +32,11 @@ GRADED_RE = re.compile(r"^rollouts_(?P<tag>.+?)_seed(?P<seed>\d+)_graded\.jsonl$
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 TAG_ORDER = ["reasoning", "instruct"]  # preferred left-to-right; others append
 
+# Published MATH-500 scores to reproduce, drawn as a reference line on the
+# accuracy panel. Phi-4-Mini-Reasoning (arXiv:2504.21233) and Phi-4-Mini
+# (arXiv:2503.01743).
+PAPER_BASELINE = {"reasoning": 0.946, "instruct": 0.635}
+
 # Chart chrome (light surface).
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
@@ -123,7 +128,7 @@ def spread(count, span):
     return [-span / 2 + span * i / (count - 1) for i in range(count)]
 
 
-def panel(ax, by_tag, colors, key, title, fmt, top_label_size=12):
+def panel(ax, by_tag, colors, key, title, fmt, top_label_size=12, reference=None):
     """One panel: mean of `key` per tag, with every seed's run overlaid.
 
     Both panels share this shape, so accuracy and truncation read as the same
@@ -136,7 +141,9 @@ def panel(ax, by_tag, colors, key, title, fmt, top_label_size=12):
     # The label offset is a constant share of the y-range, so the range has to
     # be settled before anything is drawn.
     peak = max((max(v) for v in runs.values() if v), default=0)
-    headroom = 1.0 if key == "accuracy" else max(peak * 1.35, 1)
+    # Accuracy tops out at 100% but gets a sliver of extra room so a value label
+    # bumped over a reference line still has somewhere to go.
+    headroom = 1.08 if key == "accuracy" else max(peak * 1.35, 1)
 
     ax.bar(range(len(tags)), means, width=0.38,
            color=[colors[t] for t in tags], zorder=2)
@@ -155,6 +162,19 @@ def panel(ax, by_tag, colors, key, title, fmt, top_label_size=12):
             [i + dx for dx in spread(len(values), 0.14)], values, s=34,
             color=INK, edgecolor=SURFACE, linewidth=1.5, zorder=4,
         )
+        # Published score as a recessive dashed rule over its own bar only, so
+        # it can't be read as applying to the other tag.
+        ref = (reference or {}).get(tag)
+        if ref is not None:
+            ax.hlines(ref, i - 0.19, i + 0.19, color=INK_SECONDARY,
+                      linewidth=1.5, linestyle=(0, (4, 3)), zorder=5)
+            ax.text(i + 0.24, ref, f"paper: {fmt(ref)}", ha="left", va="center",
+                    color=INK_SECONDARY, fontsize=8.5)
+            # Only step over the rule when it sits inside the label's own band;
+            # otherwise the value would float away from the bar it belongs to.
+            if top < ref < top + headroom * 0.09:
+                top = ref
+
         ax.text(
             i, top + headroom * 0.035, fmt(means[i]), ha="center", va="bottom",
             color=INK, fontsize=top_label_size, fontweight="bold",
@@ -168,7 +188,7 @@ def panel(ax, by_tag, colors, key, title, fmt, top_label_size=12):
         )
 
     ax.set_xticks(range(len(tags)), tags)
-    ax.set_xlim(-0.65, len(tags) - 0.35)
+    ax.set_xlim(-0.65, len(tags) - 0.05 if reference else len(tags) - 0.35)
     ax.set_ylim(0, headroom)
     if key == "accuracy":
         ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
@@ -186,7 +206,7 @@ def render(by_tag, out_path):
     # No legend: both panels name the tags on their x-axis, so identity never
     # rests on color alone.
     panel(ax_acc, by_tag, colors, "accuracy", "Mean accuracy on MATH-500",
-          lambda v: f"{v:.1%}")
+          lambda v: f"{v:.1%}", reference=PAPER_BASELINE)
     panel(ax_trunc, by_tag, colors, "n_truncated",
           "Truncated rollouts (mean per run of 500)",
           lambda v: f"{v:.1f}", top_label_size=11)
@@ -195,7 +215,8 @@ def render(by_tag, out_path):
     fig.text(
         0.011, 0.955,
         f"Phi-4-mini reflex diffing — seeds {', '.join(map(str, seeds))}; "
-        "dots are individual runs, whisker is the observed range",
+        "dots are individual runs, whisker is the observed range, "
+        "dashed rule is the published score",
         color=MUTED, fontsize=9, va="center",
     )
 
