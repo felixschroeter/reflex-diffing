@@ -132,8 +132,7 @@ def main():
     summary = evaluate(input_path, output_path)
 
     print(
-        f"\nAccuracy: {summary['n_correct']}/{summary['n']} = "
-        f"{summary['accuracy']:.1%}  (paper ref ~94.6%)"
+        f"\nAccuracy: {summary['n_correct']}/{summary['n']} = {summary['accuracy']:.1%}"
     )
     if summary["n"]:
         print(
