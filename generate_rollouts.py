@@ -31,9 +31,7 @@ import modal
 # the image an interpreter (the nvidia/cuda images ship none).
 image = modal.Image.from_registry(
     "nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.12"
-).uv_pip_install(
-    "vllm", "transformers", "huggingface_hub", "datasets"
-)
+).uv_pip_install("vllm", "transformers", "huggingface_hub", "datasets")
 app = modal.App("phi-mini-rollouts", image=image)
 
 # Persist the HF weights cache across runs so only the first cold start downloads.
@@ -74,7 +72,7 @@ def run_rollouts(
     n: int = 500,
     model: str = MODEL,
     max_tokens: int = 32768,
-    temperature: float = 0.8,
+    temperature: float = 0.6,
     top_p: float = 0.95,
     top_k: int = 50,
     seed: int = 0,
@@ -189,7 +187,7 @@ def main(
     n: int = 500,
     model: str = MODEL,
     max_tokens: int = 32768,
-    temperature: float = 0.8,
+    temperature: float = 0.6,
     seed: int = 0,
     output: str = None,
 ):
