@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate MATH-500 rollouts on Modal (serverless GPU).
 
-Generation only: load MATH-500 -> generate -> write rollouts_<tag>.jsonl to a
-Modal Volume. Correctness grading runs separately and locally via
+Generation only: load MATH-500 -> generate -> write rollouts_<tag>_seed<n>.jsonl
+to a Modal Volume. Correctness grading runs separately and locally via
 evaluate_correctness.py.
 
 Setup (once):
@@ -14,10 +14,10 @@ Run:
   uv run modal run generate_rollouts.py --n 500 --model microsoft/Phi-4-mini-instruct
 
 Retrieve results later (from anywhere):
-  modal volume get rollouts-data rollouts_reasoning.jsonl ./data/rollouts_reasoning.jsonl
+  modal volume get rollouts-data rollouts_reasoning_seed0.jsonl ./data/rollouts_reasoning_seed0.jsonl
 
 Grade locally:
-  uv run python evaluate_correctness.py data/rollouts_reasoning.jsonl
+  uv run python evaluate_correctness.py data/rollouts_reasoning_seed0.jsonl
 """
 
 import json
@@ -88,7 +88,7 @@ def run_rollouts(
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
 
-    output = output or f"rollouts_{model_tag(model)}.jsonl"
+    output = output or f"rollouts_{model_tag(model)}_seed{seed}.jsonl"
 
     # 1. Load MATH-500 and take the first n problems (no filtering).
     ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
@@ -162,6 +162,7 @@ def run_rollouts(
     summary = {
         "output": output,
         "model": model,
+        "seed": seed,
         "n": m,
         "n_truncated": n_truncated,
         "trunc_pct": n_truncated / m,
@@ -204,7 +205,7 @@ def main(
     )
     output = summary["output"]
 
-    print(f"\nModel: {summary['model']}")
+    print(f"\nModel: {summary['model']}  (seed {summary['seed']})")
     print(
         f"Truncated: {summary['n_truncated']}/{summary['n']} "
         f"({summary['trunc_pct']:.1%}, max_tokens={summary['max_tokens']})"

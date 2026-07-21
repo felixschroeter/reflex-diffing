@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Grade MATH-500 rollouts locally with math-verify.
 
-Reads a rollouts_<tag>.jsonl produced by generate_rollouts.py, grades each
+Reads a rollouts_<tag>_seed<n>.jsonl produced by generate_rollouts.py, grades each
 generation against its gold answer, and writes an enriched
-rollouts_<tag>_graded.jsonl where every row gains `correct`, `extracted_answer`,
-and `parse_failed`. Prints an accuracy summary. Runs locally (no GPU, no Modal).
+rollouts_<tag>_seed<n>_graded.jsonl where every row gains `correct`,
+`extracted_answer`, and `parse_failed`. Prints an accuracy summary. Runs locally
+(no GPU, no Modal).
 
 Usage:
-  uv run python evaluate_correctness.py data/rollouts_reasoning.jsonl
-  uv run python evaluate_correctness.py data/rollouts_instruct.jsonl --output data/graded.jsonl
+  uv run python evaluate_correctness.py data/rollouts_reasoning_seed0.jsonl
+  uv run python evaluate_correctness.py data/rollouts_instruct_seed0.jsonl --output data/graded.jsonl
 """
 
 import argparse
@@ -111,7 +112,7 @@ def main():
     ap.add_argument(
         "input",
         nargs="?",
-        default="data/rollouts_reasoning.jsonl",
+        default="data/rollouts_reasoning_seed0.jsonl",
         help="rollouts jsonl from generate_rollouts.py",
     )
     ap.add_argument(
